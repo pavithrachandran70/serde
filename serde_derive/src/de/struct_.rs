@@ -548,8 +548,16 @@ fn deserialize_map_in_place(
 
             let visit = match field.attrs.deserialize_with() {
                 None => {
-                    quote! {
-                        _serde::de::MapAccess::next_value_seed(&mut __map, _serde::#private::de::InPlaceSeed(&mut self.place.#member))?
+                    // `&mut` to a packed field is unaligned (E0793). Deserialize
+                    // into a temporary and assign by value instead.
+                    if params.is_packed {
+                        quote! {
+                            self.place.#member = _serde::de::MapAccess::next_value(&mut __map)?;
+                        }
+                    } else {
+                        quote! {
+                            _serde::de::MapAccess::next_value_seed(&mut __map, _serde::#private::de::InPlaceSeed(&mut self.place.#member))?
+                        }
                     }
                 }
                 Some(path) => {

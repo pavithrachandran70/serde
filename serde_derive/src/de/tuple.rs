@@ -213,13 +213,23 @@ pub(super) fn deserialize_in_place(
         // deserialize_with.
         assert!(fields[0].attrs.deserialize_with().is_none());
 
+        let member = &fields[0].member;
+        let visit = if params.is_packed {
+            quote! {
+                self.place.#member = _serde::Deserialize::deserialize(__e)?;
+            }
+        } else {
+            quote! {
+                _serde::Deserialize::deserialize_in_place(__e, &mut self.place.#member)
+            }
+        };
         Some(quote! {
             #[inline]
             fn visit_newtype_struct<__E>(self, __e: __E) -> _serde::#private::Result<Self::Value, __E::Error>
             where
                 __E: _serde::Deserializer<#delife>,
             {
-                _serde::Deserialize::deserialize_in_place(__e, &mut self.place.0)
+                #visit
             }
         })
     } else {

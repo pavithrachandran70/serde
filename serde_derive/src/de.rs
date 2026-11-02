@@ -582,11 +582,23 @@ fn deserialize_seq_in_place(
             let value_if_none = expr_is_missing_seq(Some(quote!(self.place.#member = )), index_in_seq, field, cattrs, expecting);
             let write = match field.attrs.deserialize_with() {
                 None => {
-                    quote! {
-                        if let _serde::#private::None = _serde::de::SeqAccess::next_element_seed(&mut __seq,
-                            _serde::#private::de::InPlaceSeed(&mut self.place.#member))?
-                        {
-                            #value_if_none;
+                    // `&mut` to a packed field is unaligned (E0793). Deserialize
+                    // into a temporary and assign by value instead.
+                    if params.is_packed {
+                        quote! {
+                            if let _serde::#private::Some(__value) = _serde::de::SeqAccess::next_element(&mut __seq)? {
+                                self.place.#member = __value;
+                            } else {
+                                #value_if_none;
+                            }
+                        }
+                    } else {
+                        quote! {
+                            if let _serde::#private::None = _serde::de::SeqAccess::next_element_seed(&mut __seq,
+                                _serde::#private::de::InPlaceSeed(&mut self.place.#member))?
+                            {
+                                #value_if_none;
+                            }
                         }
                     }
                 }
