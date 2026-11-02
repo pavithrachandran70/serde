@@ -1501,6 +1501,46 @@ mod content {
         }
     }
 
+    impl<'de, E> ContentDeserializer<'de, E>
+    where
+        E: de::Error,
+    {
+        /// Deserialize the buffered content of an internally tagged newtype variant.
+        ///
+        /// Flat maps and structs keep their existing representation. Values that
+        /// cannot be flattened (strings, sequences, and values that already carry
+        /// this variant's tag) are represented as a single field whose name is the
+        /// variant. That form is tried only when the historical representation does
+        /// not deserialize, so existing inputs keep their current meaning.
+        pub fn deserialize_internally_tagged_newtype<T>(self, variant: &'static str) -> Result<T, E>
+        where
+            T: Deserialize<'de>,
+        {
+            let content = self.content;
+            if let Content::Map(mut entries) = content {
+                if entries.len() == 1 && content_as_str(&entries[0].0) == Some(variant) {
+                    let (key, value) = entries.pop().unwrap();
+                    let value_fallback = content_clone(&value);
+                    match T::deserialize(ContentDeserializer::<E>::new(Content::Map(vec![(
+                        key, value,
+                    )]))) {
+                        Ok(value) => return Ok(value),
+                        Err(normal_err) => {
+                            return match T::deserialize(ContentDeserializer::<E>::new(
+                                value_fallback,
+                            )) {
+                                Ok(value) => Ok(value),
+                                Err(_) => Err(normal_err),
+                            };
+                        }
+                    }
+                }
+                return T::deserialize(ContentDeserializer::<E>::new(Content::Map(entries)));
+            }
+            T::deserialize(ContentDeserializer::<E>::new(content))
+        }
+    }
+
     struct SeqDeserializer<'de, E> {
         iter: <Vec<Content<'de>> as IntoIterator>::IntoIter,
         count: usize,
