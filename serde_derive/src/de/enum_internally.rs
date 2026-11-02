@@ -15,7 +15,8 @@ use crate::fragment::{Expr, Fragment, Match};
 use crate::internals::ast::{Style, Variant};
 use crate::internals::attr;
 use crate::private;
-use quote::quote;
+use quote::{quote, quote_spanned};
+use syn::spanned::Spanned;
 
 /// Generates `Deserialize::deserialize` body for an `enum Enum {...}` with `#[serde(tag)]` attribute
 pub(super) fn deserialize(
@@ -92,9 +93,7 @@ fn deserialize_internally_tagged_variant(
                 _serde::#private::Ok(#this_value::#variant_ident #default)
             }
         }
-        Style::Newtype => {
-            enum_untagged::deserialize_newtype_variant(variant_ident, params, &variant.fields[0])
-        }
+        Style::Newtype => deserialize_internally_tagged_newtype(variant_ident, params, variant),
         Style::Struct => struct_::deserialize(
             params,
             &variant.fields,
@@ -102,5 +101,32 @@ fn deserialize_internally_tagged_variant(
             StructForm::InternallyTagged(variant_ident),
         ),
         Style::Tuple => unreachable!("checked in serde_derive_internals"),
+    }
+}
+
+fn deserialize_internally_tagged_newtype(
+    variant_ident: &syn::Ident,
+    params: &Parameters,
+    variant: &Variant,
+) -> Fragment {
+    let field = &variant.fields[0];
+    if field.attrs.deserialize_with().is_some() {
+        return enum_untagged::deserialize_newtype_variant(variant_ident, params, field);
+    }
+
+    let this_value = &params.this_value;
+    let field_ty = &field.ty;
+    // Wrapper key written by serialize uses the serialize name. Match that key
+    // so the buffered representation round-trips, including renamed variants.
+    let variant_name = variant.attrs.name().serialize_name();
+    let span = field.original.span();
+    let de_fn = quote_spanned! {span=>
+        _serde::#private::de::ContentDeserializer::<__D::Error>::deserialize_internally_tagged_newtype::<#field_ty>
+    };
+    quote_expr! {
+        _serde::#private::Result::map(
+            #de_fn(__deserializer, #variant_name),
+            #this_value::#variant_ident,
+        )
     }
 }
